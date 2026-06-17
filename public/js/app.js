@@ -313,6 +313,202 @@
     return null;
   };
 
+  // ───────────────────────── Google Calendar ─────────────────────────
+  // Handles: "remind me to X at Y", "schedule a meeting", "add to calendar"
+  // Token is stored in localStorage after OAuth via /api/auth
+
+  const getGoogleToken = () => {
+    try {
+      const raw = localStorage.getItem("qbit_google_token");
+      if (!raw) return null;
+      return JSON.parse(raw);
+    } catch { return null; }
+  };
+
+  const parseClockTime = (str) => {
+    if (!str) return null;
+    const s = str.trim().toLowerCase();
+    const hour12 = s.match(/^(\d{1,2})(?::(\d{2}))?\s*(am|pm)$/);
+    if (hour12) {
+      let h = parseInt(hour12[1]);
+      const m = hour12[2] ? parseInt(hour12[2]) : 0;
+      const mer = hour12[3];
+      if (mer === "pm" && h !== 12) h += 12;
+      if (mer === "am" && h === 12) h = 0;
+      return { hours: h, minutes: m };
+    }
+    const hour24 = s.match(/^(\d{1,2}):(\d{2})$/);
+    if (hour24) return { hours: parseInt(hour24[1]), minutes: parseInt(hour24[2]) };
+    if (s === "noon") return { hours: 12, minutes: 0 };
+    if (s === "midnight") return { hours: 0, minutes: 0 };
+    return null;
+  };
+
+  const parseTime = (timeStr) => {
+    const now = new Date();
+    const s = timeStr.toLowerCase().trim();
+
+    const inMatch = s.match(/^in\s+(\d+)\s*(minute|minutes|hour|hours|min|mins|hr|hrs)\s*$/);
+    if (inMatch) {
+      const n = parseInt(inMatch[1]);
+      const unit = inMatch[2];
+      if (unit.startsWith("min")) now.setMinutes(now.getMinutes() + n);
+      else now.setHours(now.getHours() + n);
+      return now;
+    }
+
+    const tomorrowMatch = s.match(/^tomorrow(?:\s+at\s+|\s+)?(.+)?$/);
+    if (tomorrowMatch) {
+      const d = new Date(now);
+      d.setDate(d.getDate() + 1);
+      if (tomorrowMatch[1]) {
+        const t = parseClockTime(tomorrowMatch[1]);
+        d.setHours(t.hours, t.minutes, 0, 0);
+      } else {
+        d.setHours(9, 0, 0, 0);
+      }
+      return d;
+    }
+
+    const nextDayMatch = s.match(/^next\s+(monday|tuesday|wednesday|thursday|friday|saturday|sunday)(?:\s+at\s+|\s+)?(.+)?$/);
+    if (nextDayMatch) {
+      const days = ["sunday","monday","tuesday","wednesday","thursday","friday","saturday"];
+      const targetDay = days.indexOf(nextDayMatch[1]);
+      const d = new Date(now);
+      let diff = targetDay - d.getDay();
+      if (diff <= 0) diff += 7;
+      d.setDate(d.getDate() + diff);
+      if (nextDayMatch[2]) {
+        const t = parseClockTime(nextDayMatch[2]);
+        d.setHours(t.hours, t.minutes, 0, 0);
+      } else { d.setHours(9, 0, 0, 0); }
+      return d;
+    }
+
+    const dayMatch = s.match(/^(monday|tuesday|wednesday|thursday|friday|saturday|sunday)(?:\s+at\s+|\s+)?(.+)?$/);
+    if (dayMatch) {
+      const days = ["sunday","monday","tuesday","wednesday","thursday","friday","saturday"];
+      const targetDay = days.indexOf(dayMatch[1]);
+      const d = new Date(now);
+      let diff = targetDay - d.getDay();
+      if (diff <= 0) diff += 7;
+      d.setDate(d.getDate() + diff);
+      if (dayMatch[2]) {
+        const t = parseClockTime(dayMatch[2]);
+        d.setHours(t.hours, t.minutes, 0, 0);
+      } else { d.setHours(9, 0, 0, 0); }
+      return d;
+    }
+
+    const atMatch = s.match(/^at\s+(.+)/);
+    if (atMatch) {
+      const t = parseClockTime(atMatch[1]);
+      const d = new Date(now);
+      if (t.hours < d.getHours() || (t.hours === d.getHours() && t.minutes <= d.getMinutes())) {
+        d.setDate(d.getDate() + 1);
+      }
+      d.setHours(t.hours, t.minutes, 0, 0);
+      return d;
+    }
+
+    const t = parseClockTime(s);
+    if (t) {
+      const d = new Date(now);
+      if (t.hours < d.getHours() || (t.hours === d.getHours() && t.minutes <= d.getMinutes())) {
+        d.setDate(d.getDate() + 1);
+      }
+      d.setHours(t.hours, t.minutes, 0, 0);
+      return d;
+    }
+
+    now.setHours(now.getHours() + 1);
+    return now;
+  };
+
+  const parseEventFromQuery = (query) => {
+    const m = query.toLowerCase().trim();
+    let summary = "";
+    let dateTime = null;
+
+    const remindMatch = m.match(/remind\s+(?:me|us)\s+to\s+(.+?)(?:\s+(?:at|for|by)\s+(.+))?$/);
+    if (remindMatch) {
+      summary = remindMatch[1].charAt(0).toUpperCase() + remindMatch[1].slice(1);
+      dateTime = parseTime(remindMatch[2] || "in 1 hour");
+      return { summary, dateTime };
+    }
+
+    const scheduleMatch = m.match(/schedule\s+(?:a\s+|an\s+)?(.+?)(?:\s+(?:for|on|at)\s+(.+))?$/);
+    if (scheduleMatch) {
+      summary = scheduleMatch[1].charAt(0).toUpperCase() + scheduleMatch[1].slice(1);
+      dateTime = parseTime(scheduleMatch[2] || "tomorrow at 9am");
+      return { summary, dateTime };
+    }
+
+    const addMatch = m.match(/add\s+(.+?)(?:\s+to\s+(?:my\s+)?calendar)?(?:\s+(?:for|on|at)\s+(.+))?$/);
+    if (addMatch) {
+      summary = addMatch[1].charAt(0).toUpperCase() + addMatch[1].slice(1);
+      dateTime = parseTime(addMatch[2] || "tomorrow at 9am");
+      return { summary, dateTime };
+    }
+
+    return null;
+  };
+
+  const calendarSkill = async (q) => {
+    const m = q.toLowerCase().trim();
+    const isCalendarIntent = /^(remind\s+(?:me|us)|schedule|add\s+.+\s+to\s+(?:my\s+)?calendar|create\s+(?:a\s+)?(?:calendar\s+)?event)/.test(m);
+    if (!isCalendarIntent) return null;
+
+    const token = getGoogleToken();
+    if (!token || !token.access_token) {
+      window.open("/api/auth", "_blank", "noopener");
+      return "I need you to connect Google Calendar first. I've opened a new tab for you to sign in.";
+    }
+
+    const event = parseEventFromQuery(q);
+    if (!event || !event.summary) {
+      return "I heard you want to create an event, but I couldn't figure out the details. Try something like: remind me to buy milk at 5pm.";
+    }
+
+    const startISO = event.dateTime.toISOString();
+    const endISO = new Date(event.dateTime.getTime() + 30 * 60 * 1000).toISOString();
+
+    try {
+      const res = await fetch("/api/calendar", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${token.access_token}`,
+        },
+        body: JSON.stringify({
+          summary: event.summary,
+          description: `Created by Qbit voice assistant.\nOriginal request: "${q}"`,
+          start: startISO,
+          end: endISO,
+          refresh_token: token.refresh_token || "",
+        }),
+      });
+
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        if (res.status === 401 || err.error?.includes("401")) {
+          window.open("/api/auth", "_blank", "noopener");
+          return "Your Google access expired. I've opened a tab to re-authenticate.";
+        }
+        return `I couldn't create the event. ${err.error || "Google Calendar error"}`;
+      }
+
+      const data = await res.json();
+      if (data.success) {
+        return `Done. I've added "${event.summary}" to your calendar for ${event.dateTime.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}.`;
+      }
+      return "I couldn't create the calendar event. Please try again.";
+    } catch (err) {
+      console.error("[qbit] calendar error", err);
+      return "I had trouble reaching Google Calendar. Please try again.";
+    }
+  };
+
   // ───────────────────────── api ─────────────────────────
   const askQbit = async (message) => {
     setState("processing", "thinking...");
@@ -371,8 +567,9 @@
       return;
     }
 
-    // try an instant on-device skill first
+    // try instant on-device skills first (local, then calendar, then LLM)
     let reply = localSkill(q);
+    if (reply == null) reply = await calendarSkill(q);
     if (reply == null) reply = await askQbit(q);
 
     botText.textContent = reply;
