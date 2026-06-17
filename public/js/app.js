@@ -52,6 +52,7 @@
   let postSpeechBuffer = "";        // command spoken while Qbit was speaking, to process after TTS ends
   let postSpeechProcessed = false;  // set true when onend handles buffered content; prevents .then() race
   let userEmail = "";               // cached from userinfo for sending emails
+  let privacyMode = "medium";       // "low" | "medium" | "high" | "kill"
   let clapDetector = null;
 
   /** rolling memory: [{role:"user"|"assistant", text}] */
@@ -270,6 +271,55 @@
     netflix: "https://netflix.com", chatgpt: "https://chat.openai.com",
   };
 
+  // ───────────────────────── privacy killswitch ─────────────────────────
+  // privacyMode controls what Qbit can access:
+  //   "kill"   → everything blocked (only time/date/greetings work)
+  //   "high"   → no email, docs, sheets; calendar + weather OK
+  //   "medium" → no docs, sheets; email + calendar + weather OK (default)
+  //   "low"    → no restrictions (full workspace)
+  //
+  // Voice commands to change:
+  //   "kill switch on" / "privacy kill" / "lock down" → sets kill mode
+  //   "privacy low" / "privacy medium" / "privacy high" → sets that level
+  //   "kill switch off" / "disable kill switch" → resets to low
+
+  const isRestricted = (resource) => {
+    if (privacyMode === "kill") return true;
+    if (privacyMode === "high" && (resource === "email" || resource === "docs" || resource === "sheets")) return true;
+    if (privacyMode === "medium" && (resource === "docs" || resource === "sheets")) return true;
+    return false;
+  };
+
+  const handlePrivacyCommand = (m) => {
+    if (/\b(kill switch|privacy kill|lock down|lockdown|maximum privacy)\b/.test(m)) {
+      privacyMode = "kill";
+      postSpeechBuffer = ""; // clear any buffered commands
+      return "Privacy killswitch activated. I will not process any personal data until you disable it.";
+    }
+    if (/\b(kill switch off|disable kill switch|unlock|remove restrictions)\b/.test(m)) {
+      privacyMode = "low";
+      return "Privacy restrictions lifted. Full access restored.";
+    }
+    if (/\bprivacy (high|maximum)\b/.test(m)) {
+      privacyMode = "high";
+      return "Privacy set to high. Email, docs, and sheets are blocked. Calendar and weather still work.";
+    }
+    if (/\bprivacy medium\b/.test(m)) {
+      privacyMode = "medium";
+      return "Privacy set to medium. Docs and sheets are blocked. Email and calendar still work.";
+    }
+    if (/\bprivacy low|disable restrictions\b/.test(m)) {
+      privacyMode = "low";
+      return "Privacy set to low. All features are available.";
+    }
+    return null;
+  };
+
+  const guardSkill = (fn, resource) => async (q) => {
+    if (isRestricted(resource)) return null; // silently skip
+    return fn(q);
+  };
+
   const localSkill = (q) => {
     const m = normalize(q);
     if (!m) return null;
@@ -321,6 +371,25 @@
           if (Number.isFinite(val)) return `That's ${Math.round(val * 1e6) / 1e6}.`;
         } catch {}
       }
+    }
+
+    // privacy killswitch command (always works - highest priority)
+    const privacyResult = handlePrivacyCommand(m);
+    if (privacyResult) return privacyResult;
+
+    // check if kill mode is active — only allow time/date/greetings
+    if (privacyMode === "kill") {
+      // Only respond to time/date/greetings in kill mode
+      if (/\b(what.?s? the time|what time is it|current time|the time)\b/.test(m)) {
+        const t = new Date().toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
+        return `It's ${t}.`;
+      }
+      if (/\b(what.?s? the date|what.?s? today|today.?s date|what day is it)\b/.test(m)) {
+        const d = new Date().toLocaleDateString([], { weekday: "long", month: "long", day: "numeric", year: "numeric" });
+        return `Today is ${d}.`;
+      }
+      if (/\b(hello|hey|hi)\b/.test(m) && m.length < 16) return `Killswitch active. I can't process requests right now.`;
+      return `Privacy killswitch is active. Nothing is being logged or processed. Say "disable kill switch" to restore full access.`;
     }
 
     // greetings
@@ -779,9 +848,9 @@
     // try instant on-device skills first (local, then calendar, then LLM)
     let reply = localSkill(q);
     if (reply == null) reply = await workspaceSkill(q);
-    if (reply == null) reply = await sendEmailSkill(q);
-    if (reply == null) reply = await readDocSkill(q);
-    if (reply == null) reply = await readSheetSkill(q);
+    if (reply == null) reply = await guardSkill(sendEmailSkill, "email")(q);
+    if (reply == null) reply = await guardSkill(readDocSkill, "docs")(q);
+    if (reply == null) reply = await guardSkill(readSheetSkill, "sheets")(q);
     if (reply == null) reply = await calendarSkill(q);
     if (reply == null) reply = await askQbit(q);
 
@@ -958,10 +1027,49 @@
     }
   };
 
+  // ───────────────────────── visual privacy indicator ─────────────────────────
+  const updatePrivacyIndicator = () => {
+    const indicator = document.querySelector('[data-testid="privacy-indicator"]');
+    if (!indicator) return;
+    const labels = { kill: "🔴 KILL", high: "🟡 HIGH", medium: "🟢 MEDIUM", low: "⚪ LOW" };
+    indicator.textContent = `PRIVACY: ${labels[privacyMode] || "MEDIUM"}`;
+  };
+
+  // Center privacy display in the footer
+  const addPrivacyIndicator = () => {
+    const footer = document.querySelector(".footer");
+    if (!footer) return;
+    const sep = document.querySelector(".sep");
+    const span = document.createElement("span");
+    span.dataset.testid = "privacy-indicator";
+    span.style.marginLeft = "8px";
+    span.style.color = "#7c8aa8";
+    span.style.fontSize = "10px";
+    span.style.letterSpacing = "1px";
+    if (sep) {
+      const newSep = sep.cloneNode();
+      newSep.textContent = " / ";
+      sep.after(newSep);
+      newSep.after(span);
+    } else {
+      footer.appendChild(span);
+    }
+    updatePrivacyIndicator();
+  };
+
+  // Update indicator whenever privacy changes (wrap original)
+  const _handlePrivacyCommand = handlePrivacyCommand;
+  const handlePrivacyCommand = (m) => {
+    const result = _handlePrivacyCommand(m);
+    if (result) setTimeout(updatePrivacyIndicator, 10);
+    return result;
+  };
+
   if ("speechSynthesis" in window) {
     window.speechSynthesis.onvoiceschanged = () => { pickVoice(); };
     pickVoice();
   }
+  addPrivacyIndicator();
 
   // ───────────────────────── OAuth message listener ─────────────────────────
   // Listens for token data posted from the OAuth popup (/api/auth-callback)

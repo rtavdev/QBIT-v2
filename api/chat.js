@@ -1,21 +1,112 @@
 // /api/chat — Vercel Edge Runtime
-// Qbit's "brain". A JARVIS-style assistant: conversational memory, a witty
-// butler personality, time/context awareness, and lightweight tool use
-// (weather, web search) handled server-side so the client stays thin.
+// Qbit's "brain". A JARVIS-style assistant with automatic multi-API failover.
+// Tries providers in order: Groq → Gemini → OpenAI.
+// If one hits its rate limit (429) or errors out, it falls through to the next.
 //
 // Env vars (set in Vercel → Settings → Environment Variables):
-//   GEMINI_API_KEY  (required)  https://aistudio.google.com/apikey
-//   QBIT_USER_NAME  (optional)  how Qbit addresses you, e.g. "sir", "boss", "Tony"
-//   OPENWEATHER_API_KEY (optional) enables real weather; else uses open-meteo (no key)
+//   GROQ_API_KEY       (recommended)  https://console.groq.com/keys
+//   GEMINI_API_KEY      (optional)     https://aistudio.google.com/apikey
+//   OPENAI_API_KEY      (optional)     https://platform.openai.com/api-keys
+//   QBIT_USER_NAME      (optional)     how Qbit addresses you, e.g. "sir", "boss", "Tony"
+//   OPENWEATHER_API_KEY (optional)     enables real weather; else uses open-meteo (no key)
 
 export const config = {
   runtime: "edge",
   regions: ["iad1"],
 };
 
-const GEMINI_MODEL = "gemini-2.5-flash";
-const GEMINI_URL = (key) =>
-  `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent?key=${encodeURIComponent(key)}`;
+// ───────────────────────── provider list ─────────────────────────
+// Each provider has: name, buildPayload, callApi, extractReply
+// The handler tries them in order until one succeeds.
+
+const PROVIDERS = [];
+
+// 1. Groq (free, recommended primary)
+const groqKey = () => process.env.GROQ_API_KEY;
+if (groqKey()) {
+  PROVIDERS.push({
+    name: "groq",
+    buildPayload: (messages) => ({
+      model: "llama-3.3-70b-versatile",
+      messages,
+      temperature: 0.7,
+      max_tokens: 300,
+      top_p: 0.9,
+    }),
+    callApi: async (payload) => {
+      const res = await fetch("https://api.groq.com/openai/v1/chat/completions", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${groqKey()}`,
+        },
+        body: JSON.stringify(payload),
+      });
+      return res;
+    },
+    extractReply: (data) => data?.choices?.[0]?.message?.content?.trim(),
+  });
+}
+
+// 2. Gemini (free tier, optional fallback)
+const geminiKey = () => process.env.GEMINI_API_KEY;
+if (geminiKey()) {
+  PROVIDERS.push({
+    name: "gemini",
+    buildPayload: (messages) => {
+      // Gemini uses a different format: system instruction + contents array
+      const systemMsg = messages.find((m) => m.role === "system");
+      const rest = messages.filter((m) => m.role !== "system");
+      const contents = rest.map((m) => ({
+        role: m.role === "assistant" ? "model" : "user",
+        parts: [{ text: m.content }],
+      }));
+      return {
+        systemInstruction: systemMsg ? { role: "system", parts: [{ text: systemMsg.content }] } : undefined,
+        contents,
+        generationConfig: { temperature: 0.7, maxOutputTokens: 300, topP: 0.9 },
+      };
+    },
+    callApi: async (payload) => {
+      const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${encodeURIComponent(geminiKey())}`;
+      const res = await fetch(url, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      });
+      return res;
+    },
+    extractReply: (data) =>
+      data?.candidates?.[0]?.content?.parts?.map((p) => p.text).join(" ").trim(),
+  });
+}
+
+// 3. OpenAI (if user provides a key)
+const openaiKey = () => process.env.OPENAI_API_KEY;
+if (openaiKey()) {
+  PROVIDERS.push({
+    name: "openai",
+    buildPayload: (messages) => ({
+      model: "gpt-4o-mini",
+      messages,
+      temperature: 0.7,
+      max_tokens: 300,
+      top_p: 0.9,
+    }),
+    callApi: async (payload) => {
+      const res = await fetch("https://api.openai.com/v1/chat/completions", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${openaiKey()}`,
+        },
+        body: JSON.stringify(payload),
+      });
+      return res;
+    },
+    extractReply: (data) => data?.choices?.[0]?.message?.content?.trim(),
+  });
+}
 
 // ───────────────────────── personality ─────────────────────────
 const buildSystemPrompt = (userName, nowStr) =>
@@ -32,16 +123,12 @@ const buildSystemPrompt = (userName, nowStr) =>
   `Be helpful first, witty second.`;
 
 // ───────────────────────── tools ─────────────────────────
-// We do a cheap, deterministic intent pass before calling the LLM so common
-// "real world" questions get accurate, live answers (the JARVIS feel).
-
 const fetchJson = async (url, opts) => {
   const r = await fetch(url, opts);
   if (!r.ok) throw new Error(`${r.status}`);
   return r.json();
 };
 
-// Resolve a place name → lat/lon via open-meteo geocoding (no API key).
 const geocode = async (place) => {
   const u = `https://geocoding-api.open-meteo.com/v1/search?name=${encodeURIComponent(place)}&count=1&language=en&format=json`;
   const data = await fetchJson(u);
@@ -78,7 +165,6 @@ const getWeather = async (place) => {
   );
 };
 
-// Quick web search via DuckDuckGo Instant Answer (no key, best-effort).
 const webSearch = async (query) => {
   try {
     const u = `https://api.duckduckgo.com/?q=${encodeURIComponent(query)}&format=json&no_redirect=1&no_html=1`;
@@ -97,26 +183,19 @@ const webSearch = async (query) => {
   }
 };
 
-// Deterministic intent detection. Returns { tool, data } or null.
 const runTools = async (message) => {
   const m = message.toLowerCase();
-
-  // weather
   if (/\b(weather|temperature|forecast|how (hot|cold)|raining|sunny)\b/.test(m)) {
-    // try to extract "in <place>"
     const place =
       (message.match(/\b(?:in|at|for)\s+([a-z\s,]+?)(?:\?|$|\bright now\b|\btoday\b)/i)?.[1] || "").trim() ||
       "current location";
-    const data = await getWeather(place === "current location" ? "London" : place).catch(() => "");
+    const data = await getWeather(place === "current location" ? "Navi Mumbai Vashi" : place).catch(() => "");
     if (data) return { tool: "weather", data };
   }
-
-  // explicit web lookups (facts, "who/what/when/where is")
   if (/\b(who|what|when|where|how many|how much|define|search|look up|google)\b/.test(m) && m.length < 160) {
     const data = await webSearch(message).catch(() => "");
     if (data) return { tool: "search", data };
   }
-
   return null;
 };
 
@@ -157,69 +236,70 @@ export default async function handler(req) {
     return json({ error: "message too long" }, { status: 413 });
   }
 
-  const apiKey = process.env.GEMINI_API_KEY;
-  if (!apiKey) {
-    return json({ error: "server missing GEMINI_API_KEY env var" }, { status: 500 });
+  if (PROVIDERS.length === 0) {
+    return json({
+      error: "no api keys configured",
+      detail: "Set at least GROQ_API_KEY in Vercel env vars. Get a free key at https://console.groq.com/keys",
+    }, { status: 500 });
   }
 
   const userName = (process.env.QBIT_USER_NAME || "sir").toString();
   const systemPrompt = buildSystemPrompt(userName, nowString());
 
-  // Run lightweight tools for live/accurate data.
   let toolNote = "";
   try {
     const tool = await runTools(message);
     if (tool?.data) toolNote = tool.data;
-  } catch {
-    /* tools are best-effort; ignore failures */
-  }
+  } catch { /* best-effort */ }
 
-  // Build conversation: prior turns + this user message (+ optional tool data).
-  const contents = [];
+  // Build conversation messages array (OpenAI/Groq format)
+  const messages = [{ role: "system", content: systemPrompt }];
   for (const turn of history.slice(-12)) {
-    const role = turn?.role === "assistant" ? "model" : "user";
+    const role = turn?.role === "assistant" ? "assistant" : "user";
     const text = (turn?.text || "").toString().slice(0, 1000);
-    if (text) contents.push({ role, parts: [{ text }] });
+    if (text) messages.push({ role, content: text });
   }
-  const userParts = [{ text: message }];
-  if (toolNote) userParts.push({ text: `\n\n[TOOL DATA — use as ground truth]\n${toolNote}` });
-  contents.push({ role: "user", parts: userParts });
+  let userContent = message;
+  if (toolNote) userContent += `\n\n[TOOL DATA — use as ground truth]\n${toolNote}`;
+  messages.push({ role: "user", content: userContent });
 
-  const payload = {
-    systemInstruction: { role: "system", parts: [{ text: systemPrompt }] },
-    contents,
-    generationConfig: {
-      temperature: 0.7,
-      maxOutputTokens: 300,
-      topP: 0.9,
-    },
-  };
+  // ───────────────────────── try providers in order ─────────────────────────
+  const errors = [];
 
-  try {
-    const upstream = await fetch(GEMINI_URL(apiKey), {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(payload),
-    });
+  for (const provider of PROVIDERS) {
+    try {
+      const payload = provider.buildPayload(messages);
+      const res = await provider.callApi(payload);
 
-    if (!upstream.ok) {
-      const errBody = await upstream.text().catch(() => "");
-      return json(
-        { error: `gemini ${upstream.status}`, detail: errBody.slice(0, 400) },
-        { status: 502 }
-      );
+      if (res.status === 429) {
+        // Rate limited — skip to next provider
+        errors.push(`${provider.name}: rate limited (429)`);
+        continue;
+      }
+
+      if (!res.ok) {
+        const errBody = await res.text().catch(() => "");
+        errors.push(`${provider.name}: HTTP ${res.status} — ${errBody.slice(0, 200)}`);
+        continue;
+      }
+
+      const data = await res.json();
+      const reply = provider.extractReply(data);
+
+      if (reply) {
+        return json({ reply, usedTool: !!toolNote, provider: provider.name });
+      }
+
+      errors.push(`${provider.name}: empty response`);
+    } catch (err) {
+      errors.push(`${provider.name}: ${err?.message || "unknown error"}`);
     }
-
-    const data = await upstream.json();
-    const reply =
-      data?.candidates?.[0]?.content?.parts?.map((p) => p.text).join(" ").trim() ||
-      "I'm here, but I didn't quite catch that.";
-
-    return json({ reply, usedTool: !!toolNote });
-  } catch (err) {
-    return json(
-      { error: "upstream failure", detail: String(err?.message || err).slice(0, 400) },
-      { status: 502 }
-    );
   }
+
+  // All providers failed
+  const detail = errors.length > 0
+    ? errors.join(" | ")
+    : "no providers configured — set GROQ_API_KEY in Vercel env vars";
+
+  return json({ error: "all providers failed", detail }, { status: 502 });
 }
