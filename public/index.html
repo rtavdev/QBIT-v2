@@ -1,0 +1,60 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="theme-color" content="#05070d" />
+  <title>Qbit — Hands-Free AI Assistant</title>
+  <link rel="stylesheet" href="/style.css" />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@300;500;700&family=Syne:wght@500;700;800&display=swap" rel="stylesheet" />
+</head>
+<body data-state="idle">
+  <main class="stage" data-testid="qbit-stage">
+    <header class="brand">
+      <span class="brand-mark">Q</span>
+      <span class="brand-name">QBIT</span>
+      <span class="brand-tag">v2 · jarvis mode</span>
+
+    </header>
+
+    <section class="orb-wrap" aria-live="polite">
+      <div class="orb" data-testid="qbit-orb" aria-label="Qbit assistant orb">
+        <div class="ring ring-1"></div>
+        <div class="ring ring-2"></div>
+        <div class="ring ring-3"></div>
+        <div class="core"></div>
+        <div class="grain"></div>
+      </div>
+      <p class="state-label" data-testid="state-label">IDLE</p>
+      <p class="state-hint" data-testid="state-hint">say "hey qbit" to wake me</p>
+    </section>
+
+    <section class="transcript" data-testid="transcript-panel">
+      <div class="line line-user" data-testid="user-line">
+        <span class="line-tag">you</span>
+        <span class="line-text" data-testid="user-text">—</span>
+      </div>
+      <div class="line line-bot" data-testid="bot-line">
+        <span class="line-tag">qbit</span>
+        <span class="line-text" data-testid="bot-text">standing by.</span>
+      </div>
+    </section>
+
+    <footer class="footer">
+      <span class="dot"></span>
+      <span data-testid="mic-status">microphone: off</span>
+      <span class="sep">/</span>
+      <span data-testid="engine-status">edge runtime</span>
+    </footer>
+  </main>
+
+  <button class="enable-btn" data-testid="enable-btn" aria-label="Enable hands-free listening">
+    <span class="enable-pulse"></span>
+    enable hands-free
+  </button>
+
+  <script src="/js/app.js" defer></script>
+</body>
+</html>

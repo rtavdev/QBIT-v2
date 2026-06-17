@@ -1,0 +1,98 @@
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+:root {
+  --bg: #0a0a0a;
+  --bg2: #111111;
+  --bg3: #1a1a1a;
+  --border: rgba(255,255,255,0.08);
+  --border2: rgba(255,255,255,0.14);
+  --text: #f0f0f0;
+  --text2: #888;
+  --text3: #555;
+  --accent: #7c6fe0;
+  --accent2: #5a50b0;
+  --green: #1D9E75;
+  --red: #e24b4a;
+  --radius: 10px;
+  --radius-sm: 6px;
+}
+
+html, body { height: 100%; background: var(--bg); color: var(--text); font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; font-size: 14px; }
+
+.hidden { display: none !important; }
+
+/* Login */
+.login-screen { height: 100vh; display: flex; align-items: center; justify-content: center; }
+.login-card { background: var(--bg2); border: 0.5px solid var(--border2); border-radius: 16px; padding: 3rem 2.5rem; text-align: center; width: 340px; }
+.qbit-mark { width: 56px; height: 56px; border-radius: 50%; background: var(--accent); color: #fff; font-size: 24px; font-weight: 600; display: flex; align-items: center; justify-content: center; margin: 0 auto 1.25rem; }
+.login-card h1 { font-size: 28px; font-weight: 600; margin-bottom: 8px; }
+.login-sub { color: var(--text2); font-size: 13px; margin-bottom: 2rem; line-height: 1.5; }
+.btn-google { display: inline-flex; align-items: center; gap: 10px; background: var(--bg3); border: 0.5px solid var(--border2); border-radius: var(--radius-sm); padding: 10px 20px; color: var(--text); text-decoration: none; font-size: 14px; font-weight: 500; transition: border-color 0.15s, background 0.15s; }
+.btn-google:hover { background: #222; border-color: var(--border2); }
+
+/* App layout */
+.app { height: 100vh; }
+.main-app { display: flex; height: 100%; }
+
+/* Sidebar */
+.sidebar { width: 220px; flex-shrink: 0; background: var(--bg2); border-right: 0.5px solid var(--border); display: flex; flex-direction: column; padding: 1.25rem 1rem; }
+.sidebar-top { display: flex; align-items: center; gap: 10px; margin-bottom: 2rem; }
+.qbit-logo { width: 32px; height: 32px; border-radius: 50%; background: var(--accent); color: #fff; font-size: 14px; font-weight: 600; display: flex; align-items: center; justify-content: center; flex-shrink: 0; }
+.qbit-name { font-size: 16px; font-weight: 600; }
+
+.channel-switcher { display: flex; flex-direction: column; gap: 4px; margin-bottom: 1.5rem; }
+.ch-btn { display: flex; align-items: center; gap: 10px; background: transparent; border: none; border-radius: var(--radius-sm); padding: 8px 10px; color: var(--text2); font-size: 13px; cursor: pointer; text-align: left; transition: background 0.1s, color 0.1s; width: 100%; }
+.ch-btn:hover { background: var(--bg3); color: var(--text); }
+.ch-btn.active { background: rgba(124,111,224,0.15); color: var(--accent); }
+.ch-icon { font-size: 14px; }
+
+.tool-status { display: flex; flex-direction: column; gap: 6px; border-top: 0.5px solid var(--border); padding-top: 1rem; margin-bottom: auto; }
+.tool-item { display: flex; align-items: center; gap: 8px; font-size: 12px; color: var(--text3); padding: 4px 6px; border-radius: 4px; transition: color 0.2s; }
+.tool-item.active { color: var(--green); }
+.tool-item.locked { color: var(--text3); }
+.tool-dot { width: 6px; height: 6px; border-radius: 50%; background: currentColor; flex-shrink: 0; }
+
+.sidebar-bottom { padding-top: 1rem; border-top: 0.5px solid var(--border); }
+.user-info { font-size: 12px; color: var(--text2); margin-bottom: 8px; line-height: 1.4; }
+.user-info strong { color: var(--text); display: block; }
+.logout-btn { font-size: 12px; color: var(--text3); text-decoration: none; }
+.logout-btn:hover { color: var(--text2); }
+
+/* Chat */
+.chat-main { flex: 1; display: flex; flex-direction: column; overflow: hidden; }
+.chat-header { display: flex; align-items: center; justify-content: space-between; padding: 1rem 1.5rem; border-bottom: 0.5px solid var(--border); flex-shrink: 0; }
+.channel-label { font-size: 13px; color: var(--text2); }
+.security-badge { font-size: 12px; color: var(--text3); }
+
+.messages { flex: 1; overflow-y: auto; padding: 1.5rem; display: flex; flex-direction: column; gap: 1.25rem; }
+.messages::-webkit-scrollbar { width: 4px; }
+.messages::-webkit-scrollbar-track { background: transparent; }
+.messages::-webkit-scrollbar-thumb { background: var(--border2); border-radius: 4px; }
+
+.msg { display: flex; gap: 12px; max-width: 780px; }
+.msg.user { flex-direction: row-reverse; align-self: flex-end; }
+.msg-avatar { width: 30px; height: 30px; border-radius: 50%; background: var(--bg3); border: 0.5px solid var(--border2); display: flex; align-items: center; justify-content: center; font-size: 12px; font-weight: 600; color: var(--text2); flex-shrink: 0; margin-top: 2px; }
+.msg.qbit .msg-avatar { background: rgba(124,111,224,0.2); color: var(--accent); border-color: rgba(124,111,224,0.3); }
+.msg-body { display: flex; flex-direction: column; gap: 4px; }
+.msg-text { background: var(--bg3); border: 0.5px solid var(--border); border-radius: var(--radius); padding: 10px 14px; font-size: 14px; line-height: 1.65; color: var(--text); max-width: 600px; white-space: pre-wrap; }
+.msg.user .msg-text { background: rgba(124,111,224,0.15); border-color: rgba(124,111,224,0.25); }
+.msg-time { font-size: 11px; color: var(--text3); padding: 0 4px; }
+.msg.user .msg-time { text-align: right; }
+
+.typing-indicator .msg-text { display: flex; align-items: center; gap: 4px; padding: 12px 16px; }
+.dot { width: 6px; height: 6px; border-radius: 50%; background: var(--text3); animation: bounce 1.2s infinite; }
+.dot:nth-child(2) { animation-delay: 0.2s; }
+.dot:nth-child(3) { animation-delay: 0.4s; }
+@keyframes bounce { 0%,60%,100% { transform: translateY(0); } 30% { transform: translateY(-6px); } }
+
+/* Input */
+.input-area { padding: 1rem 1.5rem 1.25rem; border-top: 0.5px solid var(--border); flex-shrink: 0; }
+.input-wrap { display: flex; align-items: flex-end; gap: 10px; background: var(--bg3); border: 0.5px solid var(--border2); border-radius: var(--radius); padding: 8px 12px; transition: border-color 0.15s; }
+.input-wrap:focus-within { border-color: rgba(124,111,224,0.5); }
+textarea#inputBox { flex: 1; background: transparent; border: none; outline: none; color: var(--text); font-size: 14px; line-height: 1.5; resize: none; max-height: 120px; font-family: inherit; }
+textarea#inputBox::placeholder { color: var(--text3); }
+.send-btn { background: var(--accent); border: none; border-radius: 6px; width: 30px; height: 30px; display: flex; align-items: center; justify-content: center; cursor: pointer; color: #fff; flex-shrink: 0; transition: background 0.15s, transform 0.1s; }
+.send-btn:hover { background: var(--accent2); }
+.send-btn:active { transform: scale(0.94); }
+.send-btn:disabled { background: var(--bg3); color: var(--text3); cursor: not-allowed; }
+.input-hint { font-size: 11px; color: var(--text3); margin-top: 6px; padding: 0 2px; }

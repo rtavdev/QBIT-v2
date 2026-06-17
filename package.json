@@ -1,0 +1,13 @@
+{
+  "name": "qbit",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Qbit — hands-free, futuristic AI assistant. Vercel + Edge Runtime. Zero heavy deps.",
+  "scripts": {
+    "dev": "vercel dev",
+    "deploy": "vercel deploy --prod"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}
