@@ -49,6 +49,8 @@
   let conversationTimer = null;
   let queryBuffer = "";
   let queryTimer = null;
+  let postSpeechBuffer = "";        // command spoken while Qbit was speaking, to process after TTS ends
+  let postSpeechProcessed = false;  // set true when onend handles buffered content; prevents .then() race
   let clapDetector = null;
 
   /** rolling memory: [{role:"user"|"assistant", text}] */
@@ -227,8 +229,25 @@
       const v = pickVoice();
       if (v) u.voice = v;
       setState("speaking", "speaking...");
-      u.onend = () => resolve();
-      u.onerror = () => resolve();
+      u.onend = () => {
+        // Process any command the user spoke while Qbit was talking
+        const buffered = postSpeechBuffer;
+        postSpeechBuffer = "";
+        if (buffered && conversational) {
+          postSpeechProcessed = true;
+          beginQueryCapture(buffered);
+        }
+        resolve();
+      };
+      u.onerror = () => {
+        const buffered = postSpeechBuffer;
+        postSpeechBuffer = "";
+        if (buffered && conversational) {
+          postSpeechProcessed = true;
+          beginQueryCapture(buffered);
+        }
+        resolve();
+      };
       window.speechSynthesis.speak(u);
     } catch (e) {
       console.error("[qbit] tts error", e);
@@ -598,6 +617,7 @@
       queryBuffer = leftover;
       userText.textContent = leftover;
     }
+    // Ensure recognition is alive in case it dropped while Qbit was speaking
     armQueryTimer();
   };
 
@@ -606,7 +626,14 @@
     if (!leftover || leftover.length < 2) {
       const ack = pick(ACK_PHRASES);
       botText.textContent = ack;
-      speak(ack).then(() => { setState("listening", "ask me anything..."); beginQueryCapture(""); });
+      speak(ack).then(() => {
+        setState("listening", "ask me anything...");
+        // Only start clean capture if postSpeechBuffer wasn't already handled by speak()'s onend
+        if (!postSpeechProcessed) {
+          beginQueryCapture("");
+        }
+        postSpeechProcessed = false;
+      });
     } else {
       beginQueryCapture(leftover);
     }
@@ -655,7 +682,9 @@
     recognition.onend = () => {
       recognitionRunning = false;
       micStatus.textContent = "microphone: reconnecting...";
-      if (appState !== "speaking") setTimeout(startRecognition, 250);
+      // Always reconnect — if recognition drops while Qbit is speaking,
+      // the mic goes dead and all subsequent commands are lost.
+      setTimeout(startRecognition, 150);
     };
 
     recognition.onresult = (event) => {
@@ -699,8 +728,14 @@
         const wake = containsAny(finalTrimmed, WAKE_PHRASES);
         if (wake) {
           wakeUp(stripWake(finalTrimmed));
-        } else if (conversational && appState !== "speaking") {
-          beginQueryCapture(finalTrimmed);
+        } else if (conversational) {
+          // If Qbit is currently speaking, buffer the command for processing after TTS finishes
+          if (appState === "speaking") {
+            postSpeechBuffer = finalTrimmed;
+            userText.textContent = finalTrimmed;
+          } else {
+            beginQueryCapture(finalTrimmed);
+          }
         }
       }
     };
