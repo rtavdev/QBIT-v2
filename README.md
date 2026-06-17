@@ -17,6 +17,7 @@ Qbit is a minimalist, futuristic, voice-first AI assistant designed for Vercel's
 | **Web search** | DuckDuckGo instant answers (no key). *"Who was Ada Lovelace?"* |
 | **Instant on-device skills** | Time, date, arithmetic, open sites (YouTube, GitHub, Gmail...), greetings — zero latency, no network call. |
 | **Conversational mode** | Stays awake for ~12s after replying so you can ask follow-ups without re-waking. |
+| **Clap detection** | Single clap = wake Qbit, double clap = open Gmail. Works via Web Audio API live audio analysis. |
 | **Barge-in interruption** | Say "stop", "quiet", "enough" to interrupt Qbit mid-sentence. |
 | **Sleep/dismiss** | *"That's all"*, *"stand down"*, *"go to sleep"* sends Qbit back to idle. |
 | **Voice synthesis** | Browser-native TTS tuned slightly lower (calmer, butler-like). |
@@ -77,9 +78,9 @@ Open `http://localhost:3000`, click **enable hands-free**, grant mic permission,
 
 ---
 
-## Voice Commands Cheat Sheet
+## Voice & Gesture Commands Cheat Sheet
 
-| Phrase | What happens |
+| Command | What happens |
 |---|---|
 | `hey qbit` | Wake the assistant |
 | `what's the time?` | Instant local time (no network) |
@@ -92,6 +93,10 @@ Open `http://localhost:3000`, click **enable hands-free**, grant mic permission,
 | `stop` / `quiet` / `enough` | Barge-in: interrupts speaking |
 | `that's all` / `stand down` / `go to sleep` | Dismisses, returns to idle |
 | *(just keep talking)* | Follow-ups work automatically for ~12s after a reply |
+| 👏 Single clap | Wake Qbit (hands-free, no need to speak) |
+| 👏👏 Double clap | Opens Gmail instantly |
+| *(Space key)* | Push-to-talk keyboard fallback |
+| *(Escape key)* | Stop speaking / dismiss |
 
 ---
 
