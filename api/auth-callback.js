@@ -64,3 +64,23 @@ export default async function handler(req) {
 </head>
 <body>
   <div class="box">
+    <h1>✓ Connected</h1>
+    <p>Your Google Calendar is now linked to <span class="ok">Qbit</span>.</p>
+    <p class="ok">You may close this tab.</p>
+  </div>
+  <script>
+    try {
+      window.opener.postMessage({ type: "google-oauth-tokens", data: ${tokenData} }, "*");
+      window.close();
+    } catch(e) {}
+  </script>
+</body>
+</html>`;
+
+    return new Response(html, {
+      headers: { "content-type": "text/html;charset=utf-8" },
+    });
+  } catch (err) {
+    return new Response(`OAuth callback error: ${err.message}`, { status: 500 });
+  }
+}
