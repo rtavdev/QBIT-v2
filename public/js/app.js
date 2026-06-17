@@ -1,13 +1,14 @@
-/* Qbit — JARVIS-style hands-free client controller
+/* Qbit — Hands-free AI assistant client controller
  * Capabilities:
  *  - Continuous Web Speech recognition + local wake-word ("hey qbit")
  *  - Conversational mode: stays awake for follow-ups after replying
  *  - Conversation memory sent to /api/chat for contextual answers
  *  - Instant on-device skills: time, date, open sites, math, greetings, stop
  *  - Barge-in: starts listening / can be interrupted while speaking
- *  - JARVIS voice tuning + acknowledgement chimes
+ *  - Natural voice tuning + acknowledgement chimes
  *  - Clap detection: single clap = wake, double clap = open Gmail
  * No frameworks. No build step. Pure ES module-friendly script.
+ * Mobile-optimized: uses device language for better recognition.
  */
 
 (() => {
@@ -186,7 +187,7 @@
     if (!conversational || appState === "idle") {
       setState("listening", "clap detected");
       enterConversation();
-      const ack = pick(["Yes?", "I heard that.", "Clap received. Go ahead."]);
+      const ack = pick(["Yes?", "I heard that.", "Go ahead."]);
       botText.textContent = ack;
       speak(ack).then(() => {
         setState("listening", "ask me anything...");
@@ -213,10 +214,12 @@
   // ───────────────────────── speech synthesis ─────────────────────────
   const pickVoice = () => {
     const voices = window.speechSynthesis.getVoices();
+    const deviceLang = (navigator.language || "en-US").toLowerCase();
+    // Prefer device language, fall back to English
     return (
-      voices.find((v) => /en-GB/i.test(v.lang) && /Daniel|Google UK English Male|Arthur/i.test(v.name)) ||
-      voices.find((v) => /Google (US|UK) English/i.test(v.name)) ||
-      voices.find((v) => /en-(US|GB)/i.test(v.lang) && /Male|Daniel|Microsoft|Google/i.test(v.name)) ||
+      voices.find((v) => v.lang.toLowerCase() === deviceLang) ||
+      voices.find((v) => v.lang.toLowerCase().startsWith(deviceLang.split("-")[0])) ||
+      voices.find((v) => /en-(US|GB|IN)/i.test(v.lang)) ||
       voices.find((v) => /^en/i.test(v.lang)) ||
       voices[0]
     );
@@ -227,8 +230,9 @@
     try {
       window.speechSynthesis.cancel();
       const u = new SpeechSynthesisUtterance(text);
-      u.rate = 1.0;
-      u.pitch = 0.9;
+      // Slower rate for better comprehension, especially on mobile
+      u.rate = 0.9;
+      u.pitch = 1.0;
       u.volume = 1.0;
       const v = pickVoice();
       if (v) u.voice = v;
@@ -395,7 +399,7 @@
     // greetings
     if (/\b(hello|hey|hi)\b/.test(m) && m.length < 16) return "Hello. How can I help?";
     if (/\b(who are you|what are you|your name)\b/.test(m)) {
-      return "I'm Qbit, your hands-free assistant. Think of me as your JARVIS.";
+      return "I'm Qbit, your hands-free assistant.";
     }
     if (/\b(thank you|thanks|cheers)\b/.test(m) && m.length < 20) return "Always a pleasure.";
 
@@ -909,9 +913,10 @@
     const r = new SR();
     r.continuous = true;
     r.interimResults = true;
-    // Use en-US for better accuracy, with fallback to browser default
-    r.lang = "en-US";
-    // Improve accuracy with these settings
+    // Use device language for better mobile accuracy
+    const deviceLang = navigator.language || "en-US";
+    r.lang = deviceLang;
+    // Improve accuracy
     r.maxAlternatives = 1;
     return r;
   };
