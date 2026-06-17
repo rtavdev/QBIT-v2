@@ -666,31 +666,42 @@
         if (res.isFinal) finalChunk += txt + " ";
         else interim += txt + " ";
       }
-      const combined = (finalChunk + interim).trim();
-      if (!combined) return;
+      const finalTrimmed = finalChunk.trim();
+      const interimTrimmed = interim.trim();
+      if (!finalTrimmed && !interimTrimmed) return;
 
-      // barge-in: interrupt speaking if the user clearly says stop
-      if (appState === "speaking" && containsAny(combined, STOP_PHRASES)) {
+      // Show interim text on screen so user sees what's being heard, but
+      // ONLY process finalised text for wake-word / query capture. This
+      // prevents the assistant from acting on half-formed, unstable input.
+      if (interimTrimmed && awaitingQuery) {
+        userText.textContent = interimTrimmed;
+      }
+
+      // barge-in: interrupt speaking if the user clearly says stop (on final results only)
+      if (appState === "speaking" && finalTrimmed && containsAny(finalTrimmed, STOP_PHRASES)) {
         stopSpeaking();
         setState("listening", "go ahead...");
         if (conversational) beginQueryCapture("");
         return;
       }
 
-      if (awaitingQuery) {
-        const cleaned = stripWake(combined);
-        queryBuffer = cleaned || combined;
-        userText.textContent = queryBuffer;
-        if (finalChunk) armQueryTimer();
-        return;
-      }
+      // Process only finalised text for actions
+      if (finalTrimmed) {
+        if (awaitingQuery) {
+          const cleaned = stripWake(finalTrimmed);
+          queryBuffer = cleaned || finalTrimmed;
+          userText.textContent = queryBuffer;
+          armQueryTimer();
+          return;
+        }
 
-      // not capturing → wake on wake-word, or accept directly if conversational
-      const wake = containsAny(combined, WAKE_PHRASES);
-      if (wake) {
-        wakeUp(stripWake(combined));
-      } else if (conversational && appState !== "speaking") {
-        beginQueryCapture(combined);
+        // not capturing → wake on wake-word, or accept directly if conversational
+        const wake = containsAny(finalTrimmed, WAKE_PHRASES);
+        if (wake) {
+          wakeUp(stripWake(finalTrimmed));
+        } else if (conversational && appState !== "speaking") {
+          beginQueryCapture(finalTrimmed);
+        }
       }
     };
   };
