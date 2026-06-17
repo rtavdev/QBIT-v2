@@ -38,6 +38,8 @@
   const userText   = document.querySelector('[data-testid="user-text"]');
   const botText    = document.querySelector('[data-testid="bot-text"]');
   const enableBtn  = document.querySelector('[data-testid="enable-btn"]');
+  const textInput  = document.querySelector('[data-testid="text-input"]');
+  const sendBtn    = document.querySelector('[data-testid="send-btn"]');
 
   // ───────────────────────── state ─────────────────────────
   /** @type {"idle"|"listening"|"processing"|"speaking"|"error"} */
@@ -907,7 +909,10 @@
     const r = new SR();
     r.continuous = true;
     r.interimResults = true;
-    r.lang = navigator.language?.startsWith("en") ? navigator.language : "en-US";
+    // Use en-US for better accuracy, with fallback to browser default
+    r.lang = "en-US";
+    // Improve accuracy with these settings
+    r.maxAlternatives = 1;
     return r;
   };
 
@@ -1078,6 +1083,74 @@
       }
     }
   });
+
+  // ───────────────────────── text input handling ─────────────────────────
+  const sendTextMessage = () => {
+    const text = textInput.value.trim();
+    if (!text) return;
+    textInput.value = "";
+    userText.textContent = text;
+    pushHistory("user", text);
+    // Process the typed message through the same pipeline as voice
+    finalizeQueryFromText(text);
+  };
+
+  const finalizeQueryFromText = async (q) => {
+    clearTimeout(queryTimer);
+    awaitingQuery = false;
+    userText.textContent = q;
+    pushHistory("user", q);
+
+    // sleep command?
+    if (containsAny(q, SLEEP_PHRASES)) {
+      conversational = false;
+      clearTimeout(conversationTimer);
+      const bye = pick(["Standing down.", "Very good. I'll be here.", "Going quiet."]);
+      botText.textContent = bye;
+      pushHistory("assistant", bye);
+      await speak(bye);
+      setTimeout(() => setState("idle", 'say "hey qbit" to wake me'), POST_RESPONSE_COOLDOWN);
+      return;
+    }
+
+    // try skills in order
+    let reply = localSkill(q);
+    if (reply == null) reply = await workspaceSkill(q);
+    if (reply == null) reply = await guardSkill(sendEmailSkill, "email")(q);
+    if (reply == null) reply = await guardSkill(readDocSkill, "docs")(q);
+    if (reply == null) reply = await guardSkill(readSheetSkill, "sheets")(q);
+    if (reply == null) reply = await calendarSkill(q);
+    if (reply == null) reply = await askQbit(q);
+
+    botText.textContent = reply;
+    pushHistory("assistant", reply);
+    await speak(reply);
+
+    enterConversation();
+    setTimeout(() => {
+      if (conversational) { setState("listening", "anything else?"); }
+      else setState("idle", 'say "hey qbit" to wake me');
+    }, POST_RESPONSE_COOLDOWN);
+  };
+
+  if (sendBtn) {
+    sendBtn.addEventListener("click", sendTextMessage);
+  }
+  if (textInput) {
+    textInput.addEventListener("keydown", (e) => {
+      if (e.key === "Enter") {
+        e.preventDefault();
+        sendTextMessage();
+      }
+    });
+    // Focus text input on Space if not in query mode (allows typing without clicking)
+    document.addEventListener("keydown", (e) => {
+      if (e.code === "Space" && document.activeElement === textInput) {
+        // Let the input handle it
+        return;
+      }
+    });
+  }
 
   enableBtn.addEventListener("click", requestMicAndStart);
 
