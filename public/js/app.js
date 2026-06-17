@@ -6,6 +6,7 @@
  *  - Instant on-device skills: time, date, open sites, math, greetings, stop
  *  - Barge-in: starts listening / can be interrupted while speaking
  *  - JARVIS voice tuning + acknowledgement chimes
+ *  - Clap detection: single clap = wake, double clap = open Gmail
  * No frameworks. No build step. Pure ES module-friendly script.
  */
 
@@ -44,10 +45,11 @@
   let recognition = null;
   let recognitionRunning = false;
   let awaitingQuery = false;
-  let conversational = false;            // true while in an active conversation
+  let conversational = false;
   let conversationTimer = null;
   let queryBuffer = "";
   let queryTimer = null;
+  let clapDetector = null;
 
   /** rolling memory: [{role:"user"|"assistant", text}] */
   const history = [];
@@ -84,8 +86,125 @@
 
   const pick = (arr) => arr[Math.floor(Math.random() * arr.length)];
 
+  // ───────────────────────── clap detection ─────────────────────────
+  // Uses the Web Audio API to detect sharp transient sounds (claps) from
+  // the microphone. A "clap" is a sudden loud peak that decays quickly.
+  //
+  // Single clap → wake Qbit       (if idle)
+  // Double clap → open Gmail      (always)
+
+  let clapStream = null;
+  let clapAudioCtx = null;
+  let clapAnalyser = null;
+  let lastClapTime = 0;
+  const CLAP_COOLDOWN_MS = 800;       // ignore claps within this window
+  const DOUBLE_CLAP_WINDOW_MS = 700;  // max gap between two claps to count as double
+
+  const initClapDetection = (stream) => {
+    try {
+      clapStream = stream;
+      clapAudioCtx = new (window.AudioContext || window.webkitAudioContext)();
+      const source = clapAudioCtx.createMediaStreamSource(stream);
+
+      // Low-pass filter to focus on the clap frequency range (hand claps are ~1-4 kHz)
+      const filter = clapAudioCtx.createBiquadFilter();
+      filter.type = "lowpass";
+      filter.frequency.value = 4000;
+
+      clapAnalyser = clapAudioCtx.createAnalyser();
+      clapAnalyser.fftSize = 256;
+      clapAnalyser.smoothingTimeConstant = 0.3;
+
+      source.connect(filter);
+      filter.connect(clapAnalyser);
+
+      const bufferLength = clapAnalyser.frequencyBinCount;
+      const dataArray = new Uint8Array(bufferLength);
+
+      let prevAvg = 0;
+      let clapLock = false;           // prevent retriggering mid-clap
+      let lockTimer = null;
+
+      const detect = () => {
+        if (!clapAnalyser) return;
+        clapAnalyser.getByteFrequencyData(dataArray);
+
+        // Average volume across frequencies
+        let sum = 0;
+        for (let i = 0; i < bufferLength; i++) sum += dataArray[i];
+        const avg = sum / bufferLength;
+
+        // A clap = sudden volume spike ≥ threshold above the quiet floor
+        const noiseFloor = Math.max(prevAvg, 15);
+        const spike = avg - noiseFloor;
+
+        if (spike > 40 && !clapLock && avg > 50) {
+          // Clap detected! Lock to prevent double-triggering the same clap
+          clapLock = true;
+          clearTimeout(lockTimer);
+          lockTimer = setTimeout(() => { clapLock = false; }, 200);
+
+          const now = Date.now();
+          const gap = now - lastClapTime;
+
+          if (gap > CLAP_COOLDOWN_MS && gap < DOUBLE_CLAP_WINDOW_MS) {
+            // Double clap!
+            lastClapTime = 0;
+            onDoubleClap();
+          } else if (gap >= DOUBLE_CLAP_WINDOW_MS) {
+            // First clap — wait briefly to see if a second follows
+            lastClapTime = now;
+            setTimeout(() => {
+              // If no second clap arrived within the window, treat as single clap
+              if (lastClapTime === now) {
+                lastClapTime = 0;
+                onSingleClap();
+              }
+            }, DOUBLE_CLAP_WINDOW_MS + 50);
+          }
+        }
+
+        prevAvg = avg * 0.7 + (prevAvg || avg) * 0.3; // smooth the floor
+        requestAnimationFrame(detect);
+      };
+
+      detect();
+    } catch (e) {
+      console.warn("[qbit] clap detection unavailable", e);
+    }
+  };
+
+  const onSingleClap = () => {
+    if (appState === "processing" || appState === "speaking") return;
+    // Wake up if idle
+    if (!conversational || appState === "idle") {
+      setState("listening", "clap detected");
+      enterConversation();
+      const ack = pick(["Yes?", "I heard that.", "Clap received. Go ahead."]);
+      botText.textContent = ack;
+      speak(ack).then(() => {
+        setState("listening", "ask me anything...");
+        beginQueryCapture("");
+      });
+    }
+  };
+
+  const onDoubleClap = () => {
+    setState("processing", "opening mail...");
+    const msg = "Opening Gmail.";
+    botText.textContent = msg;
+    speak(msg);
+    window.open("https://mail.google.com", "_blank", "noopener");
+    setTimeout(() => {
+      if (conversational) {
+        setState("listening", "anything else?");
+      } else {
+        setState("idle", 'say "hey qbit" to wake me');
+      }
+    }, POST_RESPONSE_COOLDOWN + 600);
+  };
+
   // ───────────────────────── speech synthesis ─────────────────────────
-  let voicesReady = false;
   const pickVoice = () => {
     const voices = window.speechSynthesis.getVoices();
     return (
@@ -103,7 +222,7 @@
       window.speechSynthesis.cancel();
       const u = new SpeechSynthesisUtterance(text);
       u.rate = 1.0;
-      u.pitch = 0.9;     // slightly lower = calmer, butler-like
+      u.pitch = 0.9;
       u.volume = 1.0;
       const v = pickVoice();
       if (v) u.voice = v;
@@ -122,7 +241,6 @@
   };
 
   // ───────────────────────── on-device skills ─────────────────────────
-  // Return a string reply if handled locally, else null → goes to the LLM.
   const KNOWN_SITES = {
     youtube: "https://youtube.com", google: "https://google.com",
     gmail: "https://mail.google.com", maps: "https://maps.google.com",
@@ -134,7 +252,6 @@
 
   const localSkill = (q) => {
     const m = normalize(q);
-
     if (!m) return null;
 
     // time / date
@@ -145,6 +262,10 @@
     if (/\b(what.?s? the date|what.?s? today|today.?s date|what day is it)\b/.test(m)) {
       const d = new Date().toLocaleDateString([], { weekday: "long", month: "long", day: "numeric", year: "numeric" });
       return `Today is ${d}.`;
+    }
+    if (/\b(what.?s? the day|what day is)\b/.test(m)) {
+      const d = new Date().toLocaleDateString([], { weekday: "long" });
+      return `It's ${d}.`;
     }
 
     // open a website
@@ -162,7 +283,13 @@
       }
     }
 
-    // simple arithmetic: "what is 12 times 8", "calculate 45 / 9"
+    // mail-specific — "open mail", "check email", "open gmail"
+    if (/\b(?:open|check|read)\s*(?:my\s*)?(?:mail|email|gmail|inbox)\b/.test(m)) {
+      window.open("https://mail.google.com", "_blank", "noopener");
+      return "Opening Gmail.";
+    }
+
+    // simple arithmetic
     const mathMatch = m.match(/\b(?:what.?s|what is|calculate|compute)?\s*([0-9.\s]+(?:plus|minus|times|multiplied by|divided by|x|\+|\-|\*|\/)[0-9.\s]+)/);
     if (mathMatch) {
       const expr = mathMatch[1]
@@ -170,14 +297,13 @@
         .replace(/multiplied by|times|x/g, "*").replace(/divided by/g, "/");
       if (/^[\d\s+\-*/.]+$/.test(expr)) {
         try {
-          // eslint-disable-next-line no-new-func
           const val = Function(`"use strict";return (${expr})`)();
           if (Number.isFinite(val)) return `That's ${Math.round(val * 1e6) / 1e6}.`;
         } catch {}
       }
     }
 
-    // greetings / identity
+    // greetings
     if (/\b(hello|hey|hi)\b/.test(m) && m.length < 16) return "Hello. How can I help?";
     if (/\b(who are you|what are you|your name)\b/.test(m)) {
       return "I'm Qbit, your hands-free assistant. Think of me as your JARVIS.";
@@ -375,8 +501,10 @@
   // ───────────────────────── boot ─────────────────────────
   const requestMicAndStart = async () => {
     try {
+      // Request mic — the stream is used by clap detection (Web Audio API).
+      // Speech recognition (SpeechRecognition) accesses the mic on its own internally.
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-      stream.getTracks().forEach((t) => t.stop());
+      initClapDetection(stream);
     } catch (e) {
       setState("error", "microphone permission denied");
       micStatus.textContent = "microphone: denied";
@@ -386,21 +514,21 @@
     initRecognition();
     if (recognition) {
       startRecognition();
-      const hello = "Qbit online. Say hey Qbit, or just start talking.";
+      const hello = "Qbit online. Say hey Qbit, clap once to wake me, or clap twice for Gmail.";
       botText.textContent = hello;
       await speak(hello);
-      setState("idle", 'say "hey qbit" to wake me');
+      setState("idle", 'say "hey qbit" or clap to wake me');
     }
   };
 
   if ("speechSynthesis" in window) {
-    window.speechSynthesis.onvoiceschanged = () => { voicesReady = true; pickVoice(); };
-    pickVoice(); // warm voice list
+    window.speechSynthesis.onvoiceschanged = () => { pickVoice(); };
+    pickVoice();
   }
 
   enableBtn.addEventListener("click", requestMicAndStart);
 
-  // Keyboard helpers: Space = push to talk; Esc = stop speaking
+  // Keyboard helpers
   document.addEventListener("keydown", (e) => {
     if (e.code === "Space" && !awaitingQuery && appState !== "processing") {
       e.preventDefault();
