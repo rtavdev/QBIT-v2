@@ -1,4 +1,4 @@
-// /api/auth — Initiate Google OAuth for Calendar access
+// /api/auth — Initiate Google OAuth for Calendar + Gmail + Docs + Sheets
 // Vercel Edge Runtime
 // Redirects the user to Google's consent screen.
 
@@ -14,11 +14,20 @@ export default async function handler(req) {
   const protocol = host.includes("localhost") ? "http" : "https";
   const redirectUri = `${protocol}://${host}/api/auth-callback`;
 
+  const scope = [
+    "https://www.googleapis.com/auth/calendar.events",
+    "https://www.googleapis.com/auth/gmail.send",
+    "https://www.googleapis.com/auth/gmail.readonly",
+    "https://www.googleapis.com/auth/documents.readonly",
+    "https://www.googleapis.com/auth/spreadsheets.readonly",
+    "https://www.googleapis.com/auth/userinfo.email",
+  ].join(" ");
+
   const params = new URLSearchParams({
     client_id: clientId,
     redirect_uri: redirectUri,
     response_type: "code",
-    scope: "https://www.googleapis.com/auth/calendar.events",
+    scope,
     access_type: "offline",
     prompt: "consent",
     state: "/",

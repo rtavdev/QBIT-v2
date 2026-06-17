@@ -51,6 +51,7 @@
   let queryTimer = null;
   let postSpeechBuffer = "";        // command spoken while Qbit was speaking, to process after TTS ends
   let postSpeechProcessed = false;  // set true when onend handles buffered content; prevents .then() race
+  let userEmail = "";               // cached from userinfo for sending emails
   let clapDetector = null;
 
   /** rolling memory: [{role:"user"|"assistant", text}] */
@@ -329,6 +330,14 @@
     }
     if (/\b(thank you|thanks|cheers)\b/.test(m) && m.length < 20) return "Always a pleasure.";
 
+    // who am i / what's my email
+    if (/\b(who am i|what.?s my email|my email address|my email)\b/.test(m)) {
+      const token = getGoogleToken();
+      if (!token || !token.access_token) return "I need you to connect your Google account first.";
+      // Handled by workspaceSkill instead (async)
+      return null;
+    }
+
     return null;
   };
 
@@ -473,6 +482,187 @@
     return null;
   };
 
+  const getTokenWithRefresh = () => {
+    const token = getGoogleToken();
+    if (!token || !token.access_token) return null;
+    return token;
+  };
+
+  const fetchWithAuth = async (url, body) => {
+    const token = getTokenWithRefresh();
+    if (!token) return { error: "not_authenticated" };
+    const res = await fetch(url, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${token.access_token}`,
+      },
+      body: JSON.stringify({ ...body, refresh_token: token.refresh_token || "" }),
+    });
+    if (res.status === 401) return { error: "token_expired" };
+    return res.json();
+  };
+
+  // ───────────────────────── Google Workspace skills ─────────────────────────
+
+  const getUserInfo = async () => {
+    const token = getTokenWithRefresh();
+    if (!token) return null;
+    try {
+      const res = await fetch("/api/userinfo", {
+        headers: { Authorization: `Bearer ${token.access_token}` },
+      });
+      if (!res.ok) return null;
+      const data = await res.json();
+      if (data.success) {
+        userEmail = data.email;
+        return data;
+      }
+    } catch {}
+    return null;
+  };
+
+  const sendEmailSkill = async (q) => {
+    const m = q.toLowerCase().trim();
+    // Patterns: "send email to [name/email] about [subject] (saying) [body]"
+    //           "email [name] [subject] [body]"
+    //           "send an email to [name] that [body]"
+    const emailMatch = m.match(/^(?:send\s+(?:an?\s+)?email|email)\s+(?:to\s+)?(.+?)(?:\s+about\s+(.+?)(?:\s+(?:saying|that|body)\s+(.+))?)?$/);
+    if (!emailMatch) return null;
+
+    let recipient = emailMatch[1].trim();
+    let subject = emailMatch[2]?.trim() || "Message from Qbit";
+    let body = emailMatch[3]?.trim() || "";
+
+    // If no explicit body, the rest of the query after "about" might contain it
+    if (!body && subject && subject.length > 40) {
+      body = subject;
+      subject = "Message from Qbit";
+    }
+
+    const token = getTokenWithRefresh();
+    if (!token) {
+      window.open("/api/auth", "_blank", "noopener");
+      return "I need you to connect your Google account first. I've opened a tab for you.";
+    }
+
+    // Resolve name to email if needed (try common patterns)
+    let to = recipient;
+    if (!recipient.includes("@")) {
+      to = `${recipient.replace(/\s+/g, ".").toLowerCase()}@gmail.com`;
+    }
+
+    // Get sender email if not cached
+    if (!userEmail) {
+      const info = await getUserInfo();
+      if (!info || !info.email) return "I couldn't find your email address. Please re-authenticate.";
+      userEmail = info.email;
+    }
+
+    try {
+      const result = await fetchWithAuth("/api/gmail", { to, subject, body, from: userEmail });
+      if (result.error === "not_authenticated") {
+        window.open("/api/auth", "_blank", "noopener");
+        return "I need you to connect your Google account first.";
+      }
+      if (result.success) return `Email sent to ${to} with subject "${subject}".`;
+      return `I couldn't send the email. ${result.error || "Unknown error"}`;
+    } catch (err) {
+      return "I had trouble sending the email. Please try again.";
+    }
+  };
+
+  const readDocSkill = async (q) => {
+    const m = q.toLowerCase().trim();
+    // Patterns: "read doc [id]" or "read my document about [name]"
+    // For MVP, accept a direct document ID or URL
+    const docMatch = m.match(/^(?:read|open|show)\s+(?:(?:my\s+)?(?:doc|document|google doc)\s+)?(?:(?:with id|id\s*:?\s*|https?:\/\/docs\.google\.com\/document\/d\/)?([a-zA-Z0-9_-]{20,}))\s*.*$/);
+    if (!docMatch) return null;
+
+    let docId = docMatch[1];
+    // Extract from URL if it's a full URL
+    if (docId.includes("/")) {
+      const parts = docId.split("/");
+      for (const p of parts) {
+        if (p.length === 44 && /^[a-zA-Z0-9_-]+$/.test(p)) { docId = p; break; }
+      }
+    }
+
+    const token = getTokenWithRefresh();
+    if (!token) {
+      window.open("/api/auth", "_blank", "noopener");
+      return "I need you to connect your Google account first.";
+    }
+
+    try {
+      const result = await fetchWithAuth("/api/docs", { documentId: docId });
+      if (result.error === "not_authenticated") {
+        window.open("/api/auth", "_blank", "noopener");
+        return "Your Google access expired. I've opened a tab to re-authenticate.";
+      }
+      if (result.success) {
+        const preview = result.content.slice(0, 1000);
+        const wordCount = result.content.split(/\s+/).length;
+        return `Document "${result.title}" — ${wordCount} words, ${result.charCount} characters. Here's the start: ${preview}`;
+      }
+      return `I couldn't read that document. ${result.error || "Unknown error"}`;
+    } catch (err) {
+      return "I had trouble accessing Google Docs. Please try again.";
+    }
+  };
+
+  const readSheetSkill = async (q) => {
+    const m = q.toLowerCase().trim();
+    // Patterns: "read sheet [id]" or "read my spreadsheet about [name]"
+    const sheetMatch = m.match(/^(?:read|open|show)\s+(?:(?:my\s+)?(?:sheet|spreadsheet|google sheets?|excel)\s+)?(?:(?:with id|id\s*:?\s*|https?:\/\/docs\.google\.com\/spreadsheets\/d\/)?([a-zA-Z0-9_-]{20,}))\s*.*$/);
+    if (!sheetMatch) return null;
+
+    let sheetId = sheetMatch[1];
+    if (sheetId.includes("/")) {
+      const parts = sheetId.split("/");
+      for (const p of parts) {
+        if (p.length === 44 && /^[a-zA-Z0-9_-]+$/.test(p)) { sheetId = p; break; }
+      }
+    }
+
+    const token = getTokenWithRefresh();
+    if (!token) {
+      window.open("/api/auth", "_blank", "noopener");
+      return "I need you to connect your Google account first.";
+    }
+
+    try {
+      const result = await fetchWithAuth("/api/sheets", { spreadsheetId: sheetId });
+      if (result.error === "not_authenticated") {
+        window.open("/api/auth", "_blank", "noopener");
+        return "Your Google access expired. I've opened a tab to re-authenticate.";
+      }
+      if (result.success) {
+        const sheetNames = result.sheets.map((s) => s.title).join(", ");
+        const preview = result.data ? result.data.slice(0, 500) : "No data found.";
+        return `Spreadsheet "${result.title}" has sheets: ${sheetNames}. ${result.rowCount} rows fetched. Here's the data: ${preview}`;
+      }
+      return `I couldn't read that spreadsheet. ${result.error || "Unknown error"}`;
+    } catch (err) {
+      return "I had trouble accessing Google Sheets. Please try again.";
+    }
+  };
+
+  const workspaceSkill = async (q) => {
+    const m = q.toLowerCase().trim();
+    if (!m) return null;
+
+    // who am i / my email
+    if (/\b(who am i|what.?s my email|my email address)\b/.test(m)) {
+      const info = await getUserInfo();
+      if (info) return `You are ${info.name || "the Google account user"}. Your email is ${info.email}.`;
+      window.open("/api/auth", "_blank", "noopener");
+      return "I need you to connect your Google account first. I've opened a tab for you.";
+    }
+
+    return null;
+  };
+
   const calendarSkill = async (q) => {
     const m = q.toLowerCase().trim();
     const isCalendarIntent = /^(remind\s+(?:me|us)|schedule|add\s+.+\s+to\s+(?:my\s+)?calendar|create\s+(?:a\s+)?(?:calendar\s+)?event)/.test(m);
@@ -588,6 +778,10 @@
 
     // try instant on-device skills first (local, then calendar, then LLM)
     let reply = localSkill(q);
+    if (reply == null) reply = await workspaceSkill(q);
+    if (reply == null) reply = await sendEmailSkill(q);
+    if (reply == null) reply = await readDocSkill(q);
+    if (reply == null) reply = await readSheetSkill(q);
     if (reply == null) reply = await calendarSkill(q);
     if (reply == null) reply = await askQbit(q);
 
@@ -768,6 +962,23 @@
     window.speechSynthesis.onvoiceschanged = () => { pickVoice(); };
     pickVoice();
   }
+
+  // ───────────────────────── OAuth message listener ─────────────────────────
+  // Listens for token data posted from the OAuth popup (/api/auth-callback)
+  window.addEventListener("message", (event) => {
+    if (event.data?.type === "google-oauth-tokens") {
+      try {
+        const tokenData = event.data.data;
+        const parsed = typeof tokenData === "string" ? JSON.parse(tokenData) : tokenData;
+        localStorage.setItem("qbit_google_token", JSON.stringify(parsed));
+        // Fetch user email immediately after auth
+        getUserInfo();
+        botText.textContent = "Google account connected. You can now use calendar, email, docs, and sheets.";
+      } catch (e) {
+        console.warn("[qbit] failed to save oauth token", e);
+      }
+    }
+  });
 
   enableBtn.addEventListener("click", requestMicAndStart);
 
