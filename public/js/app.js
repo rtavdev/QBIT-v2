@@ -291,28 +291,26 @@
   };
 
   const handlePrivacyCommand = (m) => {
+    let result = null;
     if (/\b(kill switch|privacy kill|lock down|lockdown|maximum privacy)\b/.test(m)) {
       privacyMode = "kill";
       postSpeechBuffer = ""; // clear any buffered commands
-      return "Privacy killswitch activated. I will not process any personal data until you disable it.";
-    }
-    if (/\b(kill switch off|disable kill switch|unlock|remove restrictions)\b/.test(m)) {
+      result = "Privacy killswitch activated. I will not process any personal data until you disable it.";
+    } else if (/\b(kill switch off|disable kill switch|unlock|remove restrictions)\b/.test(m)) {
       privacyMode = "low";
-      return "Privacy restrictions lifted. Full access restored.";
-    }
-    if (/\bprivacy (high|maximum)\b/.test(m)) {
+      result = "Privacy restrictions lifted. Full access restored.";
+    } else if (/\bprivacy (high|maximum)\b/.test(m)) {
       privacyMode = "high";
-      return "Privacy set to high. Email, docs, and sheets are blocked. Calendar and weather still work.";
-    }
-    if (/\bprivacy medium\b/.test(m)) {
+      result = "Privacy set to high. Email, docs, and sheets are blocked. Calendar and weather still work.";
+    } else if (/\bprivacy medium\b/.test(m)) {
       privacyMode = "medium";
-      return "Privacy set to medium. Docs and sheets are blocked. Email and calendar still work.";
-    }
-    if (/\bprivacy low|disable restrictions\b/.test(m)) {
+      result = "Privacy set to medium. Docs and sheets are blocked. Email and calendar still work.";
+    } else if (/\bprivacy low|disable restrictions\b/.test(m)) {
       privacyMode = "low";
-      return "Privacy set to low. All features are available.";
+      result = "Privacy set to low. All features are available.";
     }
-    return null;
+    if (result) setTimeout(updatePrivacyIndicator, 10);
+    return result;
   };
 
   const guardSkill = (fn, resource) => async (q) => {
@@ -1057,13 +1055,6 @@
     updatePrivacyIndicator();
   };
 
-  // Update indicator whenever privacy changes (wrap original)
-  const _handlePrivacyCommand = handlePrivacyCommand;
-  const handlePrivacyCommand = (m) => {
-    const result = _handlePrivacyCommand(m);
-    if (result) setTimeout(updatePrivacyIndicator, 10);
-    return result;
-  };
 
   if ("speechSynthesis" in window) {
     window.speechSynthesis.onvoiceschanged = () => { pickVoice(); };
