@@ -69,8 +69,8 @@ export default async function handler(req) {
   const eventPayload = {
     summary,
     description,
-    start: { dateTime: startTime, timeZone: "UTC" },
-    end: { dateTime: endTime, timeZone: "UTC" },
+    start: { dateTime: startTime, timeZone: "Asia/Kolkata" },
+    end: { dateTime: endTime, timeZone: "Asia/Kolkata" },
   };
 
   try {
