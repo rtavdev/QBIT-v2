@@ -85,6 +85,21 @@ html, body { height: 100%; background: var(--bg); color: var(--text); font-famil
 .dot:nth-child(3) { animation-delay: 0.4s; }
 @keyframes bounce { 0%,60%,100% { transform: translateY(0); } 30% { transform: translateY(-6px); } }
 
+/* Speaking state - pulsing glow on Qbit message while TTS plays */
+.msg.qbit.speaking .msg-avatar {
+  box-shadow: 0 0 0 0 rgba(124, 111, 224, 0.6);
+  animation: speakPulse 1.2s ease-in-out infinite;
+}
+.msg.qbit.speaking .msg-text {
+  border-color: rgba(124, 111, 224, 0.4);
+  background: rgba(124, 111, 224, 0.1);
+}
+@keyframes speakPulse {
+  0% { box-shadow: 0 0 0 0 rgba(124, 111, 224, 0.6); }
+  50% { box-shadow: 0 0 0 8px rgba(124, 111, 224, 0); }
+  100% { box-shadow: 0 0 0 0 rgba(124, 111, 224, 0); }
+}
+
 /* Input */
 .input-area { padding: 1rem 1.5rem 1.25rem; border-top: 0.5px solid var(--border); flex-shrink: 0; }
 .input-wrap { display: flex; align-items: flex-end; gap: 10px; background: var(--bg3); border: 0.5px solid var(--border2); border-radius: var(--radius); padding: 8px 12px; transition: border-color 0.15s; }

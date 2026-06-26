@@ -38,7 +38,31 @@ GOOGLE_REDIRECT_URI=https://your-vercel-domain.vercel.app/api/auth/callback
 
 ---
 
-## 4. Enable Google APIs
+## 4. Google Cloud Text-to-Speech Setup (Optional — Voice Responses)
+
+Qbit can speak responses aloud using Google Cloud Text-to-Speech with the premium `en-US-Neural2-J` voice.
+
+1. Go to https://console.cloud.google.com/apis/credentials
+2. Click **Create Credentials → Service Account**
+3. Name it `qbit-tts`, click **Create and Continue**
+4. Grant role: **Text-to-Speech Admin**
+5. Click **Done**, then click on the new service account
+6. Go to **Keys → Add Key → Create New Key**
+7. Choose **JSON**, download the key file
+8. **Minify the entire JSON into one line** (use https://jsonminifier.com or similar)
+9. Set the environment variable in Vercel:
+   ```
+   GOOGLE_APPLICATION_CREDENTIALS_JSON=<paste minified JSON here>
+   ```
+10. Enable the Cloud Text-to-Speech API:
+    - Go to https://console.cloud.google.com/apis/library/texttospeech.googleapis.com
+    - Click **Enable**
+
+> **Free Tier:** Google Cloud TTS offers 1 million free characters per month. The endpoint is serverless and only runs when called — no background costs.
+
+---
+
+## 5. Enable Google APIs
 
 In Google Cloud Console → APIs & Services → Enable APIs:
 
@@ -51,7 +75,7 @@ In Google Cloud Console → APIs & Services → Enable APIs:
 
 ---
 
-## 5. Deploy to Vercel
+## 6. Deploy to Vercel
 
 ```bash
 npm install -g vercel
@@ -63,7 +87,7 @@ Or connect your GitHub repo in the Vercel dashboard for auto-deploy.
 
 ---
 
-## 6. Local Development
+## 7. Local Development
 
 ```bash
 npm install
