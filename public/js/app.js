@@ -20,7 +20,7 @@
     "hey qubit", "hi qbit", "ok qbit", "okay qbit", "qbit", "cubit", "qubit",
   ];
   const SLEEP_PHRASES = [
-    "go to sleep", "stand down", "that's all", "thats all", "thank you that's all",
+    "go to sleep", "stand down", "shut down", "shutdown", "that's all", "thats all", "thank you that's all",
     "goodbye", "good bye", "stop listening", "dismiss",
   ];
   const STOP_PHRASES = ["stop", "quiet", "shut up", "enough", "cancel", "be quiet"];
